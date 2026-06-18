@@ -1,0 +1,9 @@
+# binary
+oci-shipper
+
+# OCI credentials
+.oci/
+
+# Go build cache
+*.test
+*.out
