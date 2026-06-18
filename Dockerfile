@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
       -o oci-shipper .
 
 # distroless/static includes CA certs (needed for OCI HTTPS) and runs as non-root.
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12
 
 COPY --from=builder /app/oci-shipper /oci-shipper
 
