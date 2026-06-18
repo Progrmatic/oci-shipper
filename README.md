@@ -184,9 +184,7 @@ Two jobs run in sequence:
 
 - **`build`** — builds `linux/amd64` and `linux/arm64` in **parallel** on **native** runners (`ubuntu-24.04` for amd64, `ubuntu-24.04-arm` for arm64) with `fail-fast: false`, so a single platform failure does not cancel the other. Each platform uses its own registry cache key (`oci-shipper:cache-amd64` / `oci-shipper:cache-arm64`) to avoid concurrent write conflicts. The image is pushed by digest only — no tag is applied yet.
 
-- **`merge`** — downloads both digests, combines them into a single multi-arch manifest tagged `:<version>` and `:latest`, then applies two layers of supply-chain security:
-  1. **GitHub provenance attestation** ([`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance)) — links the manifest to the exact source commit and workflow run; visible on the GHCR package page.
-  2. **Cosign keyless signing** — signs the manifest via Sigstore OIDC; no key management required.
+- **`merge`** — downloads both digests, combines them into a single multi-arch manifest tagged `:<version>` and `:latest`, then applies supply-chain security via **GitHub provenance attestation** ([`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance)) — links the manifest to the exact source commit and workflow run; visible on the GHCR package page.
 
 To release:
 
@@ -195,13 +193,12 @@ git tag v1.2.3
 git push origin v1.2.3   # triggers the workflow
 ```
 
-### Verifying the image signature
+### Verifying the image attestation
 
 ```bash
-cosign verify \
-  --certificate-identity-regexp "https://github.com/<owner>/oci-shipper/.*" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  ghcr.io/<owner>/oci-shipper:latest
+gh attestation verify \
+  oci://ghcr.io/Progrmatic/oci-shipper:latest \
+  --owner Progrmatic
 ```
 
 ## OCI config
