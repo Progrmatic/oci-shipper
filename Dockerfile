@@ -9,7 +9,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux ${TARGETARCH:+GOARCH=${TARGETARCH}} go build \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
       -buildvcs=false \
       -ldflags="-s -w" \
       -o oci-shipper .
