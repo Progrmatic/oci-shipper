@@ -184,7 +184,9 @@ workflow 在任何 `v*` tag push 時觸發，建立多架構 image 並推送至 
 
 - **`build`**——在**原生** runner 上**並行**建立 `linux/amd64` 與 `linux/arm64`（amd64 用 `ubuntu-24.04`，arm64 用 `ubuntu-24.04-arm`），設定 `fail-fast: false`，單一平台失敗不會取消另一個。各 platform 使用獨立的 registry cache key（`oci-shipper:cache-amd64` / `oci-shipper:cache-arm64`）以避免並發寫入衝突。Image 僅以 digest 推送，尚未加 tag。
 
-- **`merge`**——下載兩個 digest，合併為單一多架構 manifest 並標記 `:<version>` 與 `:latest`，接著透過 **GitHub provenance attestation**（[`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance)）套用供應鏈安全機制，將 manifest 連結至確切的 source commit 與 workflow run；可在 GHCR package 頁面查看。
+- **`merge`**——下載兩個 digest，合併為單一多架構 manifest 並標記 `:<version>` 與 `:latest`，接著套用兩層供應鏈安全機制：
+  1. **GitHub provenance attestation**（[`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance)）——將 manifest 連結至確切的 source commit 與 workflow run；可在 GHCR package 頁面查看。
+  2. **Cosign keyless 簽名**——透過 Sigstore OIDC 對 manifest 簽名，無需管理金鑰。
 
 發版方式：
 
@@ -193,12 +195,13 @@ git tag v1.2.3
 git push origin v1.2.3   # 觸發 workflow
 ```
 
-### 驗證 image attestation
+### 驗證 image 簽名
 
 ```bash
-gh attestation verify \
-  oci://ghcr.io/Progrmatic/oci-shipper:latest \
-  --owner Progrmatic
+cosign verify \
+  --certificate-identity-regexp "https://github.com/<owner>/oci-shipper/.*" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/<owner>/oci-shipper:latest
 ```
 
 ## OCI 設定
