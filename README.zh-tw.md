@@ -20,7 +20,7 @@ tail -f /var/log/nginx/access.log | ./oci-shipper -log-id ocid1.log...
 
 ### 2. Daemon 模式（互動式終端機）
 
-未接管道直接啟動時，shipper 會建立以 PID 命名的 FIFO，透過 `dup2` 掛到 `fd 0` 後刪除路徑，僅保留 `/proc/{pid}/fd/0`。
+未接管道直接啟動時，shipper 會建立以 PID 命名的 FIFO，透過 `dup3(fd, 0, 0)` 掛到 `fd 0` 後刪除路徑，僅保留 `/proc/{pid}/fd/0`。
 
 ```bash
 ./oci-shipper -log-id ocid1.log...

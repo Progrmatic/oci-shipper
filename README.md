@@ -20,7 +20,7 @@ tail -f /var/log/nginx/access.log | ./oci-shipper -log-id ocid1.log...
 
 ### 2. Daemon mode (interactive terminal)
 
-Launched without a pipe, the shipper creates a PID-based FIFO, wires it onto `fd 0` via `dup2`, then unlinks the path. Only `/proc/{pid}/fd/0` remains.
+Launched without a pipe, the shipper creates a PID-based FIFO, wires it onto `fd 0` via `dup3(fd, 0, 0)`, then unlinks the path. Only `/proc/{pid}/fd/0` remains.
 
 ```bash
 ./oci-shipper -log-id ocid1.log...
