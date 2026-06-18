@@ -128,3 +128,10 @@ jobs:
         run: |
           cosign sign --yes \
             ${{ env.REGISTRY }}/${{ env.IMAGE }}@${{ steps.manifest.outputs.digest }}
+
+      - name: Retag after signing
+        run: |
+          docker buildx imagetools create \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ github.ref_name }} \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE }}:latest \
+            ${{ env.REGISTRY }}/${{ env.IMAGE }}@${{ steps.manifest.outputs.digest }}
