@@ -4,6 +4,20 @@
 
 一個輕量級 log shipper，從 stdin 或具名管道（named pipe）讀取 log 行，透過 Logging Ingestion API 轉送至 [OCI Logging](https://docs.oracle.com/en-us/iaas/Content/Logging/Concepts/loggingoverview.htm)。
 
+## Container image
+
+```bash
+# 最新穩定版
+docker pull ghcr.io/progrmatic/oci-shipper:latest
+
+# 指定版本
+docker pull ghcr.io/progrmatic/oci-shipper:v0.1.0
+```
+
+多架構支援：`linux/amd64` 與 `linux/arm64`，Docker 會自動選擇對應版本。
+
+> **注意：** [GHCR package 頁面](https://github.com/Progrmatic/oci-shipper/pkgs/container/oci-shipper) 同時會列出供應鏈安全相關 artifact（`.sig` 為 Cosign 簽名，`.att` 為 GitHub provenance attestation），請忽略這些，使用以上指令即可。
+
 ## 為什麼不用 Fluent Bit？
 
 Fluent Bit 的 OCI output plugin 目標是 **OCI Logging Analytics**——這是另一個服務，無法透過標準 OCI Logging 整合從 Grafana 存取。本 shipper 直接對應 **OCI Logging**（`loggingingestion` API），log 無需額外 pipeline 即可出現在 Grafana。

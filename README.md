@@ -4,6 +4,20 @@
 
 A lightweight log shipper that reads log lines from stdin (or a named pipe) and forwards them to [OCI Logging](https://docs.oracle.com/en-us/iaas/Content/Logging/Concepts/loggingoverview.htm) via the Logging Ingestion API.
 
+## Container image
+
+```bash
+# latest stable
+docker pull ghcr.io/progrmatic/oci-shipper:latest
+
+# specific version
+docker pull ghcr.io/progrmatic/oci-shipper:v0.1.0
+```
+
+Multi-arch: supports `linux/amd64` and `linux/arm64` — Docker selects the right variant automatically.
+
+> **Note:** The [GHCR package page](https://github.com/Progrmatic/oci-shipper/pkgs/container/oci-shipper) also lists supply-chain security artifacts (`.sig` for the Cosign signature, `.att` for the GitHub provenance attestation). Ignore those — use the commands above.
+
 ## Why not Fluent Bit?
 
 Fluent Bit's OCI output plugin targets **OCI Logging Analytics** — a separate service that is not accessible from Grafana via the standard OCI Logging integration. This shipper targets **OCI Logging** (the `loggingingestion` API) directly, so logs appear in Grafana without any additional pipeline.
