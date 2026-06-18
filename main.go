@@ -285,8 +285,8 @@ func openFIFO(path string, unlinkAfter bool) *os.File {
 		os.Exit(1)
 	}
 
-	if err := syscall.Dup2(int(f.Fd()), 0); err != nil {
-		fmt.Fprintf(os.Stderr, "dup2: %v\n", err)
+	if err := syscall.Dup3(int(f.Fd()), 0, 0); err != nil {
+		fmt.Fprintf(os.Stderr, "dup3: %v\n", err)
 		os.Exit(1)
 	}
 	f.Close()
