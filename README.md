@@ -124,6 +124,51 @@ livenessProbe:
   failureThreshold: 6   # tolerate up to 30 s of OCI unavailability before restarting
 ```
 
+## Docker Compose sidecar
+
+The following example ships nginx access logs to OCI Logging. The two
+containers share a named volume so they can exchange data through the FIFO.
+`oci-shipper` must start first so the pipe exists before `app` tries to write to it.
+
+```yaml
+services:
+  app:
+    image: nginx:latest
+    volumes:
+      - oci-pipe:/var/run/oci-shipper
+    ports:
+      - "80:80"
+    # The official nginx image routes access logs to stdout.
+    # tee duplicates that stream into the pipe for oci-shipper to pick up.
+    command: ["/bin/sh", "-c", "nginx -g 'daemon off;' | tee /var/run/oci-shipper/in.pipe"]
+    depends_on:
+      - oci-shipper
+
+  oci-shipper:
+    image: ghcr.io/progrmatic/oci-shipper:latest
+    environment:
+      - OCI_LOG_ID=ocid1.log.oc1.<region>.<unique_id>
+      - OCI_PIPE_PATH=/var/run/oci-shipper/in.pipe
+      - OCI_CONFIG_FILE=/app/.oci/config
+    volumes:
+      - .oci:/app/.oci:ro          # OCI SDK config + key file
+      - oci-pipe:/var/run/oci-shipper
+
+volumes:
+  oci-pipe:
+```
+
+The `.oci/config` `key_file` must reference the path **inside the container**:
+
+```ini
+[DEFAULT]
+user=ocid1.user.oc1...<unique_id>
+fingerprint=xx:xx:xx:...
+tenancy=ocid1.tenancy.oc1...<unique_id>
+region=ap-tokyo-1
+key_file=/app/.oci/oci_api_key.pem
+```
+
 ## Kubernetes sidecar
 
 ```yaml

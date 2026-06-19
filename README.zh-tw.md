@@ -124,6 +124,49 @@ livenessProbe:
   failureThreshold: 6   # 最多容忍 30 秒的 OCI 不可用再重啟
 ```
 
+## Docker Compose Sidecar
+
+以下範例將 nginx access log 轉送至 OCI Logging。兩個 container 共享一個 named volume，透過 FIFO 交換資料。`oci-shipper` 需先啟動以建立 pipe，`app` 才能寫入。
+
+```yaml
+services:
+  app:
+    image: nginx:latest
+    volumes:
+      - oci-pipe:/var/run/oci-shipper
+    ports:
+      - "80:80"
+    # 官方 nginx image 會將 access log 路由到 stdout。
+    # tee 將這個 stream 同時複製到 pipe，供 oci-shipper 讀取。
+    command: ["/bin/sh", "-c", "nginx -g 'daemon off;' | tee /var/run/oci-shipper/in.pipe"]
+    depends_on:
+      - oci-shipper
+
+  oci-shipper:
+    image: ghcr.io/progrmatic/oci-shipper:latest
+    environment:
+      - OCI_LOG_ID=ocid1.log.oc1.<region>.<unique_id>
+      - OCI_PIPE_PATH=/var/run/oci-shipper/in.pipe
+      - OCI_CONFIG_FILE=/app/.oci/config
+    volumes:
+      - .oci:/app/.oci:ro          # OCI SDK config 與 key file
+      - oci-pipe:/var/run/oci-shipper
+
+volumes:
+  oci-pipe:
+```
+
+`.oci/config` 中的 `key_file` 必須使用 **container 內部**的絕對路徑：
+
+```ini
+[DEFAULT]
+user=ocid1.user.oc1...<unique_id>
+fingerprint=xx:xx:xx:...
+tenancy=ocid1.tenancy.oc1...<unique_id>
+region=ap-tokyo-1
+key_file=/app/.oci/oci_api_key.pem
+```
+
 ## Kubernetes Sidecar
 
 ```yaml
