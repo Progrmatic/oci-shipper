@@ -34,13 +34,13 @@ tail -f /var/log/nginx/access.log | ./oci-shipper -log-id ocid1.log...
 
 ### 2. Daemon 模式（互動式終端機）
 
-未接管道直接啟動時，shipper 會建立以 PID 命名的 FIFO，透過 `dup3(fd, 0, 0)` 掛到 `fd 0` 後刪除路徑，僅保留 `/proc/{pid}/fd/0`。
+未接管道直接啟動時，shipper 會建立以 PID 命名的 FIFO，開啟後立即刪除檔案系統路徑。FIFO 僅能透過 `/proc/{pid}/fd/{n}` 存取，其中 `{n}` 是啟動時印出的實際 file descriptor 編號。
 
 ```bash
 ./oci-shipper -log-id ocid1.log...
 # PID: 12345
 # 推送 log 的方式：
-#   echo 'log line' > /proc/12345/fd/0
+#   echo 'log line' > /proc/12345/fd/3
 ```
 
 ### 3. Sidecar 模式（固定 FIFO 路徑）
@@ -60,6 +60,8 @@ tail -f /var/log/nginx/access.log | ./oci-shipper -log-id ocid1.log...
 
 FIFO 以 `O_RDWR` 開啟，shipper 自己持有寫入端，防止外部寫入方關閉時送出 EOF——shipper 會持續執行並等待下一行。使用短暫寫入（`echo "..." > /pipe`）的寫入方，若 shipper 暫時停止，會在 `open()` 阻塞，等 shipper 重啟後自動恢復。
 
+`openFIFO` 回傳的 `*os.File` 保留在 Go runtime poller 中。讀取時只暫停 goroutine，不會卡住 OS thread，讓程序在等待資料期間仍能正常回應 flush ticker 與信號。
+
 ## 設定
 
 所有 flag 均可改用環境變數（詳見下表）。flag 優先於環境變數。
@@ -76,6 +78,15 @@ FIFO 以 `O_RDWR` 開啟，shipper 自己持有寫入端，防止外部寫入方
 | `-pipe` | `OCI_PIPE_PATH` | `` | 固定 FIFO 路徑（sidecar 模式） |
 | `-health-port` | — | `8080` | HTTP 健康檢查 port |
 | `-health-threshold` | — | `30s` | 距上次成功傳送超過此時間後，`/health` 回傳 503 |
+
+## Exit codes
+
+| Code | 意義 |
+|------|------|
+| `0` | 正常退出——reader 收到 EOF，或收到 SIGTERM / SIGINT |
+| `1` | 意外讀取錯誤（例如 `bad file descriptor`）——FIFO 已失效 |
+
+Kubernetes 依據 exit code 決定重啟策略。Exit `1` 會觸發 **CrashLoopBackOff**（指數退避重啟），防止 FIFO 持續損壞時陷入快速重啟循環。Exit `0` 會立即重啟且無退避，因此僅保留給正常關閉使用。
 
 ## 批次處理
 

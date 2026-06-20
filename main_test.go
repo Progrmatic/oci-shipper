@@ -4,9 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -351,4 +356,122 @@ func TestHealthHandler_Returns200AfterMarkSuccess(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 after markSuccess, got %d", rec.Code)
 	}
+}
+
+// ── readLines ────────────────────────────────────────────────────────────────
+
+// failReader returns the given error on every Read call.
+type failReader struct{ err error }
+
+func (f *failReader) Read([]byte) (int, error) { return 0, f.err }
+
+func TestReadLines_CleanEOF(t *testing.T) {
+	r := strings.NewReader("alpha\nbeta\n")
+	lines := make(chan string, 10)
+
+	err := readLines(r, lines)
+	close(lines)
+
+	if err != nil {
+		t.Fatalf("expected nil on clean EOF, got: %v", err)
+	}
+	var got []string
+	for l := range lines {
+		got = append(got, l)
+	}
+	if len(got) != 2 || got[0] != "alpha" || got[1] != "beta" {
+		t.Fatalf("unexpected lines: %v", got)
+	}
+}
+
+func TestReadLines_PropagatesReadError(t *testing.T) {
+	want := errors.New("bad file descriptor")
+	lines := make(chan string, 10)
+
+	err := readLines(&failReader{err: want}, lines)
+
+	if err == nil {
+		t.Fatal("expected error from failing reader, got nil")
+	}
+	if err.Error() != want.Error() {
+		t.Fatalf("expected %q, got %q", want, err)
+	}
+}
+
+// ── run (event loop exit codes) ──────────────────────────────────────────────
+
+func TestRun_ExitsZeroOnCleanEOF(t *testing.T) {
+	r := strings.NewReader("line1\nline2\n")
+	b := newBatcher(&mockClient{responses: []error{nil}})
+	sigs := make(chan os.Signal)
+
+	code := run(context.Background(), b, r, sigs)
+	if code != 0 {
+		t.Fatalf("expected exit code 0 on clean EOF, got %d", code)
+	}
+}
+
+func TestRun_ExitsOneOnReadError(t *testing.T) {
+	r := &failReader{err: errors.New("bad file descriptor")}
+	b := newBatcher(&mockClient{})
+	sigs := make(chan os.Signal)
+
+	code := run(context.Background(), b, r, sigs)
+	if code != 1 {
+		t.Fatalf("expected exit code 1 on read error, got %d", code)
+	}
+}
+
+func TestRun_ExitsZeroOnSignal(t *testing.T) {
+	pr, pw := io.Pipe()
+	defer pw.Close()
+	b := newBatcher(&mockClient{})
+	sigs := make(chan os.Signal, 1)
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		sigs <- syscall.SIGTERM
+	}()
+
+	code := run(context.Background(), b, pr, sigs)
+	if code != 0 {
+		t.Fatalf("expected exit code 0 on SIGTERM, got %d", code)
+	}
+}
+
+// ── openFIFO ─────────────────────────────────────────────────────────────────
+
+func TestOpenFIFO_CreatesNewFIFO(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.pipe")
+
+	f := openFIFO(path, false)
+	if f == nil {
+		t.Fatal("expected non-nil file")
+	}
+	f.Close()
+
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat after openFIFO: %v", err)
+	}
+	if fi.Mode()&os.ModeNamedPipe == 0 {
+		t.Fatal("expected named pipe at path")
+	}
+}
+
+func TestOpenFIFO_ReusesExistingFIFO(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "existing.pipe")
+
+	if err := syscall.Mkfifo(path, 0600); err != nil {
+		t.Fatalf("setup mkfifo: %v", err)
+	}
+
+	// Should reuse the existing FIFO without error.
+	f := openFIFO(path, false)
+	if f == nil {
+		t.Fatal("expected non-nil file on reuse of existing FIFO")
+	}
+	f.Close()
 }

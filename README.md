@@ -34,13 +34,13 @@ tail -f /var/log/nginx/access.log | ./oci-shipper -log-id ocid1.log...
 
 ### 2. Daemon mode (interactive terminal)
 
-Launched without a pipe, the shipper creates a PID-based FIFO, wires it onto `fd 0` via `dup3(fd, 0, 0)`, then unlinks the path. Only `/proc/{pid}/fd/0` remains.
+Launched without a pipe, the shipper creates a PID-based FIFO, opens it, then unlinks the filesystem path. The FIFO remains accessible only via `/proc/{pid}/fd/{n}`, where `{n}` is the actual file descriptor number printed on startup.
 
 ```bash
 ./oci-shipper -log-id ocid1.log...
 # PID: 12345
 # Push logs with:
-#   echo 'log line' > /proc/12345/fd/0
+#   echo 'log line' > /proc/12345/fd/3
 ```
 
 ### 3. Sidecar mode (fixed FIFO path)
@@ -60,6 +60,8 @@ If the FIFO already exists on restart (e.g. K8s container restart), it is reused
 
 The FIFO is opened with `O_RDWR` so the shipper itself holds the write end. This prevents EOF from being sent when an external writer closes — the shipper keeps running and waiting for the next line. Writers that use short-lived writes (`echo "..." > /pipe`) will **block** if the shipper is temporarily down and resume automatically once it restarts.
 
+The `*os.File` returned by `openFIFO` is left in Go's runtime poller. Reads park only the goroutine (not the OS thread), so the process remains responsive to flush ticks and signals while waiting for data.
+
 ## Configuration
 
 All flags also accept an environment variable (listed in the table). Flags take precedence over environment variables.
@@ -76,6 +78,15 @@ All flags also accept an environment variable (listed in the table). Flags take 
 | `-pipe` | `OCI_PIPE_PATH` | `` | Fixed FIFO path (sidecar mode) |
 | `-health-port` | — | `8080` | HTTP health check port |
 | `-health-threshold` | — | `30s` | Time since last successful send before `/health` returns 503 |
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Clean exit — EOF on the reader or SIGTERM / SIGINT received |
+| `1` | Unexpected read error (e.g. `bad file descriptor`) — the FIFO became invalid |
+
+Kubernetes uses the exit code to decide restart behaviour. Exit `1` triggers **CrashLoopBackOff** (exponential back-off), preventing a tight restart loop when the FIFO is persistently broken. Exit `0` restarts immediately with no back-off, so it is reserved for intentional shutdowns only.
 
 ## Batching
 

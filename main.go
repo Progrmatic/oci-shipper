@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -94,22 +95,6 @@ func main() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 
-	lines := make(chan string, defaultBatchSize*2)
-
-	go func() {
-		scanner := bufio.NewScanner(reader)
-		for scanner.Scan() {
-			lines <- scanner.Text()
-		}
-		if err := scanner.Err(); err != nil {
-			fmt.Fprintf(os.Stderr, "read error: %v\n", err)
-		}
-		close(lines)
-	}()
-
-	ticker := time.NewTicker(defaultFlushEvery)
-	defer ticker.Stop()
-
 	b := &batcher{
 		client:  client,
 		cfg:     cfg,
@@ -118,12 +103,48 @@ func main() {
 		backoff: defaultRetryBackoff,
 	}
 
+	os.Exit(run(ctx, b, reader, sigs))
+}
+
+// readLines scans r line-by-line, sending each line to lines.
+// It returns the first non-EOF read error, or nil on clean EOF.
+func readLines(r io.Reader, lines chan<- string) error {
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		lines <- scanner.Text()
+	}
+	return scanner.Err()
+}
+
+// run is the main event loop. It returns 0 on clean exit (EOF or signal) and
+// 1 when the reader fails unexpectedly, so the caller can pass the code to
+// os.Exit and let the process manager apply the appropriate restart policy.
+func run(ctx context.Context, b *batcher, reader io.Reader, sigs <-chan os.Signal) int {
+	lines := make(chan string, defaultBatchSize*2)
+	readErrCh := make(chan error, 1)
+
+	go func() {
+		if err := readLines(reader, lines); err != nil {
+			fmt.Fprintf(os.Stderr, "read error: %v\n", err)
+			readErrCh <- err
+		}
+		close(lines)
+	}()
+
+	ticker := time.NewTicker(defaultFlushEvery)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case line, ok := <-lines:
 			if !ok {
 				b.flush(ctx)
-				return
+				select {
+				case <-readErrCh:
+					return 1
+				default:
+					return 0
+				}
 			}
 			b.buf = append(b.buf, line)
 			if len(b.buf) >= defaultBatchSize {
@@ -133,7 +154,7 @@ func main() {
 			b.flush(ctx)
 		case <-sigs:
 			b.flush(ctx)
-			return
+			return 0
 		}
 	}
 }
@@ -255,9 +276,11 @@ func setupInput(pipePath string) *os.File {
 	return openFIFO(fmt.Sprintf("/tmp/oci-shipper-%d.pipe", os.Getpid()), true)
 }
 
-// openFIFO creates (or reuses) a named FIFO, wires it onto fd 0 via dup2,
-// and returns the refreshed os.Stdin.
-// unlinkAfter removes the filesystem path after dup2 so only /proc/{pid}/fd/0 remains.
+// openFIFO creates (or reuses) a named FIFO and returns it directly as the
+// reader. It does not manipulate fd 0 / os.Stdin; the returned *os.File stays
+// in Go's runtime poller so reads park the goroutine, not the OS thread.
+// unlinkAfter removes the filesystem path after opening so the FIFO is only
+// reachable via /proc/{pid}/fd/{n}.
 func openFIFO(path string, unlinkAfter bool) *os.File {
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -266,12 +289,11 @@ func openFIFO(path string, unlinkAfter bool) *os.File {
 		}
 	}
 
-	err := syscall.Mkfifo(path, 0600)
-	if err != nil && !os.IsExist(err) {
-		fmt.Fprintf(os.Stderr, "mkfifo %s: %v\n", path, err)
-		os.Exit(1)
-	}
-	if os.IsExist(err) {
+	if err := syscall.Mkfifo(path, 0600); err != nil {
+		if !os.IsExist(err) {
+			fmt.Fprintf(os.Stderr, "mkfifo %s: %v\n", path, err)
+			os.Exit(1)
+		}
 		fi, statErr := os.Stat(path)
 		if statErr != nil || fi.Mode()&os.ModeNamedPipe == 0 {
 			fmt.Fprintf(os.Stderr, "%s exists but is not a FIFO\n", path)
@@ -285,24 +307,18 @@ func openFIFO(path string, unlinkAfter bool) *os.File {
 		os.Exit(1)
 	}
 
-	if err := syscall.Dup3(int(f.Fd()), 0, 0); err != nil {
-		fmt.Fprintf(os.Stderr, "dup3: %v\n", err)
-		os.Exit(1)
-	}
-	f.Close()
-
 	if unlinkAfter {
 		os.Remove(path)
-		os.Stdin = os.NewFile(0, "fifo")
 		fmt.Fprintf(os.Stderr, "PID: %d\n", os.Getpid())
-		fmt.Fprintf(os.Stderr, "Push logs with:\n  echo 'log line' > /proc/%d/fd/0\n\n", os.Getpid())
+		// f.Fd() prints the actual fd and intentionally sets blocking mode,
+		// which is acceptable for the interactive (non-K8s) use case.
+		fmt.Fprintf(os.Stderr, "Push logs with:\n  echo 'log line' > /proc/%d/fd/%d\n\n", os.Getpid(), f.Fd())
 	} else {
-		os.Stdin = os.NewFile(0, path)
 		fmt.Fprintf(os.Stderr, "FIFO: %s\n", path)
 		fmt.Fprintf(os.Stderr, "Push logs with:\n  echo 'log line' > %s\n\n", path)
 	}
 
-	return os.Stdin
+	return f
 }
 
 func parseConfig() *config {
