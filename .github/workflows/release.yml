@@ -10,8 +10,20 @@ env:
   IMAGE: oci-shipper
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+
   # Build each platform in parallel, push by digest (no tag yet).
   build:
+    needs: test
     permissions:
       contents: read
       packages: write
